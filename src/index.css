@@ -20,22 +20,14 @@
 
 @layer base {
   :root {
-    --theme-color: #6366f1;
-    --bg-color: #f8fafc;
-    --ink-color: #0f172a;
-    --glass-bg: rgba(255, 255, 255, 0.7);
-    --card-bg: white;
-    --border-color: rgba(0, 0, 0, 0.05);
+    --theme-color: #f59e0b;
+    --bg-color: #fcfcfb;
+    --ink-color: #1e293b;
+    --glass-bg: rgba(255, 255, 255, 0.85);
+    --card-bg: #ffffff;
+    --border-color: rgba(245, 158, 11, 0.1);
   }
   
-  .dark {
-    --bg-color: #0f172a;
-    --ink-color: #f8fafc;
-    --glass-bg: rgba(15, 23, 42, 0.8);
-    --card-bg: #1e293b;
-    --border-color: rgba(255, 255, 255, 0.1);
-  }
-
   body {
     @apply bg-bg text-ink font-sans antialiased transition-colors duration-300;
   }
@@ -60,16 +52,24 @@
   }
   
   .soft-gradient {
-    background: linear-gradient(135deg, #f5f7ff 0%, #ffffff 100%);
+    background: linear-gradient(135deg, #fffbeb 0%, #ffffff 100%);
   }
 
   .mesh-gradient {
-    background-color: #f8fafc;
+    background-color: #fdfdfc;
     background-image: 
-      radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.1) 0, transparent 50%), 
-      radial-gradient(at 100% 0%, rgba(236, 72, 153, 0.1) 0, transparent 50%),
-      radial-gradient(at 100% 100%, rgba(34, 197, 94, 0.1) 0, transparent 50%),
-      radial-gradient(at 0% 100%, rgba(245, 158, 11, 0.1) 0, transparent 50%);
+      radial-gradient(at 0% 0%, rgba(245, 158, 11, 0.12) 0, transparent 60%), 
+      radial-gradient(at 100% 0%, rgba(99, 102, 241, 0.08) 0, transparent 60%),
+      radial-gradient(at 100% 100%, rgba(236, 72, 153, 0.08) 0, transparent 60%),
+      radial-gradient(at 0% 100%, rgba(20, 184, 166, 0.08) 0, transparent 60%);
+  }
+
+  .neo-shadow {
+    box-shadow: 4px 4px 0px 0px rgba(0, 0, 0, 0.1);
+  }
+  
+  .neo-shadow-brand {
+    box-shadow: 4px 4px 0px 0px var(--theme-color);
   }
 }
 

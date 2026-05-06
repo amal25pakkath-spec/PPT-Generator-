@@ -29,15 +29,17 @@ import {
   Users,
   FileText,
   Link,
-  Moon,
-  Sun,
   FileDown,
   Monitor,
-  Eye
+  Search,
+  Eye,
+  Lock,
+  Zap
 } from "lucide-react";
 import { generatePresentation, generateImage, PresentationData, SlideData, CustomContent } from "./lib/gemini";
 import { exportToPptx } from "./lib/pptx";
 import { cn } from "./lib/utils";
+import { ImageAssistantModal } from "./components/ImageAssistantModal";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import { 
@@ -92,31 +94,25 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 }
 
 const THEME_COLORS = [
+  { name: "Yellow", value: "#f59e0b" },
+  { name: "Teal", value: "#0f766e" },
+  { name: "Emerald", value: "#059669" },
   { name: "Blue", value: "#3b82f6" },
   { name: "Red", value: "#ef4444" },
-  { name: "Pink", value: "#ec4899" },
-  { name: "Green", value: "#22c55e" },
-  { name: "Yellow", value: "#eab308" },
-  { name: "Black", value: "#000000" },
-  { name: "Violet", value: "#8b5cf6" },
+  { name: "Rose", value: "#e11d48" },
 ];
 
 type Step = "landing" | "metadata" | "blueprint" | "editor";
 
 export default function App() {
   const [step, setStep] = useState<Step>("landing");
-  const [darkMode, setDarkMode] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("darkMode") === "true";
-    }
-    return false;
-  });
   const [topic, setTopic] = useState("");
   const [numSlides, setNumSlides] = useState(5);
   const [style, setStyle] = useState("Professional");
   const [eduLevel, setEduLevel] = useState("University");
+  const [userRole, setUserRole] = useState<"Student" | "Professional" | "Teacher">("Student");
   const [complexity, setComplexity] = useState("Medium");
-  const [themeColor, setThemeColor] = useState("#3b82f6");
+  const [themeColor, setThemeColor] = useState("#f59e0b");
   const [addImages, setAddImages] = useState(false);
   const [imagePlacement, setImagePlacement] = useState<"bottom" | "top" | "left" | "right" | "auto">("auto");
   
@@ -127,6 +123,7 @@ export default function App() {
 
   const [loading, setLoading] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [data, setData] = useState<PresentationData | null>(null);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
@@ -134,8 +131,6 @@ export default function App() {
   // AI Image States
   const [slideImages, setSlideImages] = useState<Record<number, string>>({});
   const [activeImageSlideIndex, setActiveImageSlideIndex] = useState<number | null>(null);
-  const [imageChatPrompt, setImageChatPrompt] = useState("");
-  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [showImageAssistant, setShowImageAssistant] = useState(false);
 
   // Custom Content States
@@ -165,15 +160,6 @@ export default function App() {
       unsubscribeStats();
     };
   }, []);
-
-  useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-    localStorage.setItem("darkMode", darkMode.toString());
-  }, [darkMode]);
 
   const readingTimeEstimate = useMemo(() => {
     if (!data) return null;
@@ -212,6 +198,8 @@ export default function App() {
     if (e) e.preventDefault();
     if (!topic.trim()) return;
 
+    const controller = new AbortController();
+    setAbortController(controller);
     setLoading(true);
     setGenerationProgress(10);
     
@@ -225,6 +213,7 @@ export default function App() {
     try {
       // Small Delay for UX
       await new Promise(r => setTimeout(r, 800));
+      if (controller.signal.aborted) return;
       setGenerationProgress(25);
 
       const result = await generatePresentation(topic, { 
@@ -239,6 +228,8 @@ export default function App() {
         visualTemplate: visualTemplate || undefined
       });
       
+      if (controller.signal.aborted) return;
+
       clearInterval(progressInterval);
       setGenerationProgress(90);
       await new Promise(r => setTimeout(r, 500));
@@ -258,13 +249,27 @@ export default function App() {
       setData(result);
       setStep("editor");
       setCurrentSlideIndex(0);
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log('Generation cancelled by user');
+        return;
+      }
       console.error(error);
       alert("Something went wrong. Please try again.");
     } finally {
       clearInterval(progressInterval);
       setLoading(false);
       setGenerationProgress(0);
+      setAbortController(null);
+    }
+  };
+
+  const handleCancelGeneration = () => {
+    if (abortController) {
+      abortController.abort();
+      setLoading(false);
+      setGenerationProgress(0);
+      setAbortController(null);
     }
   };
 
@@ -305,23 +310,6 @@ export default function App() {
     setContentData("");
   };
 
-  const handleGenerateImage = async () => {
-    if (!imageChatPrompt.trim() || activeImageSlideIndex === null) return;
-    setIsGeneratingImage(true);
-    try {
-      const imageUrl = await generateImage(imageChatPrompt);
-      setSlideImages(prev => ({ ...prev, [activeImageSlideIndex]: imageUrl }));
-      setShowImageAssistant(false);
-      setImageChatPrompt("");
-      setActiveImageSlideIndex(null);
-    } catch (e) {
-      console.error(e);
-      alert("Failed to generate image. Please try a different prompt.");
-    } finally {
-      setIsGeneratingImage(false);
-    }
-  };
-
   const handleLocalImageUpload = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -342,7 +330,6 @@ export default function App() {
 
   const openImageAssistant = (index: number) => {
     setActiveImageSlideIndex(index);
-    setImageChatPrompt("");
     setShowImageAssistant(true);
   };
 
@@ -376,7 +363,7 @@ export default function App() {
         const canvas = await html2canvas(elements[i] as HTMLElement, {
           scale: 2,
           useCORS: true,
-          backgroundColor: darkMode ? "#0f172a" : "#ffffff"
+          backgroundColor: "#ffffff"
         });
         const imgData = canvas.toDataURL("image/png");
         const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -409,12 +396,6 @@ export default function App() {
           <span className="font-display font-bold text-2xl tracking-tighter">SlideCraft<span style={{ color: themeColor }}>AI</span></span>
         </div>
         <div className="flex items-center gap-4">
-          <button
-            onClick={() => setDarkMode(!darkMode)}
-            className="w-10 h-10 rounded-full flex items-center justify-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm hover:scale-110 transition-all"
-          >
-            {darkMode ? <Sun className="w-5 h-5 text-yellow-500" /> : <Moon className="w-5 h-5 text-slate-400" />}
-          </button>
           {step !== "landing" && (
             <button 
               onClick={() => { setStep("landing"); setData(null); setSlideImages({}); }}
@@ -467,12 +448,22 @@ export default function App() {
                     "Finalizing slides & visual layout..."}
                  </p>
               </div>
-              <div className="w-64 h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                 <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${generationProgress}%` }}
-                    className="h-full bg-brand"
-                 />
+
+              <div className="flex flex-col items-center gap-6">
+                <div className="w-64 h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                   <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${generationProgress}%` }}
+                      className="h-full bg-brand"
+                   />
+                </div>
+
+                <button 
+                  onClick={handleCancelGeneration}
+                  className="px-6 py-2 rounded-full border border-slate-200 dark:border-slate-700 text-[10px] font-black uppercase tracking-widest opacity-40 hover:opacity-100 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-100 transition-all"
+                >
+                  Cancel Generation
+                </button>
               </div>
             </motion.div>
           )}
@@ -485,138 +476,137 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="flex-1 flex flex-col items-center justify-center p-8 max-w-7xl mx-auto w-full relative overflow-hidden"
+              className="flex-1 flex flex-col lg:flex-row min-h-0 w-full relative overflow-hidden bg-[#fcfcfb]"
             >
-              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full -z-10 opacity-20 dark:opacity-10">
-                <div className="absolute top-[10%] left-[20%] w-64 h-64 bg-brand rounded-full blur-[100px] animate-pulse" />
-                <div className="absolute bottom-[20%] right-[10%] w-96 h-96 bg-ppt-blue rounded-full blur-[120px] animate-pulse" style={{ animationDelay: '2s' }} />
-              </div>
-
-              <div className="grid lg:grid-cols-2 gap-20 items-center">
-                <div className="text-left space-y-8">
-                  <motion.div
-                    initial={{ y: 20, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    transition={{ delay: 0.2 }}
-                    className="space-y-4"
+              {/* Left Side: Bold Report Style */}
+              <div className="flex-1 flex flex-col justify-center p-12 lg:p-24 space-y-12 bg-white relative z-10 w-full lg:w-3/5">
+                <div className="space-y-4">
+                  <motion.div 
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="flex items-center gap-2"
                   >
-                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-brand/10 text-brand text-[10px] font-black uppercase tracking-widest">
-                       <Sparkles className="w-3 h-3" /> AI Presentation Architect
-                    </div>
-                    <h1 className="text-7xl md:text-8xl font-display font-bold tracking-tight leading-[0.9]">
-                      Build Slides <br />
-                      <span className="text-brand">Smarter.</span>
-                    </h1>
-                    <p className="text-xl text-ink/40 dark:text-ink/60 font-medium max-w-lg leading-relaxed">
-                      Transforming your topic ideas into meaningful slides in seconds. From lecture outlines to thesis defenses—get visual, academically structured decks instantly.
-                    </p>
-                    <div className="flex flex-wrap gap-x-6 gap-y-2 opacity-60">
-                      {[
-                        { icon: Check, text: "Automated Citations" },
-                        { icon: Check, text: "Academic Structure" },
-                        { icon: Check, text: "Visual-Rich Design" }
-                      ].map((item, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <item.icon className="w-3 h-3 text-brand" />
-                          <span className="text-[10px] font-black uppercase tracking-widest">{item.text}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </motion.div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full pt-4">
-                    <motion.button
-                      whileHover={{ y: -5 }}
-                      whileTap={{ scale: 0.98 }}
-                      onClick={() => setStep("metadata")}
-                      className="group flex flex-col items-center justify-center p-8 bg-white dark:bg-slate-800 border-2 border-brand/20 rounded-[2.5rem] shadow-xl hover:shadow-2xl hover:bg-brand transition-all relative overflow-hidden text-center gap-4"
+                    <div 
+                      className="w-12 h-10 border-2 border-slate-900 flex items-center justify-center rounded-md bg-white shadow-[4px_4px_0px_0px_rgba(245,158,11,1)] group cursor-pointer hover:translate-y-[-2px] hover:shadow-[6px_6px_0px_0px_rgba(245,158,11,1)] transition-all"
+                      title="SlideCraft AI Logo"
                     >
-                      <div className="w-16 h-16 rounded-2xl bg-brand/10 group-hover:bg-white/20 flex items-center justify-center text-brand group-hover:text-white transition-colors">
-                        <GraduationCap className="w-8 h-8" />
-                      </div>
-                      <div>
-                        <div className="text-[10px] font-black uppercase tracking-widest text-brand group-hover:text-white/60 mb-1 leading-none">Workspace</div>
-                        <div className="text-xl font-display font-bold group-hover:text-white transition-colors leading-none mb-1">Students</div>
-                        <div className="text-[10px] font-bold opacity-40 group-hover:text-white/40">Free to Use</div>
-                      </div>
-                      <div className="absolute top-4 right-4 group-hover:translate-x-1 opacity-0 group-hover:opacity-100 transition-all">
-                        <ArrowRight className="w-4 h-4 text-white" />
-                      </div>
-                    </motion.button>
-
-                    <div className="group flex flex-col items-center justify-center p-8 bg-white/50 dark:bg-slate-800/50 border-2 border-slate-100 dark:border-slate-700 rounded-[2.5rem] opacity-40 grayscale cursor-not-allowed relative overflow-hidden text-center gap-4">
-                      <div className="w-16 h-16 rounded-2xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-400">
-                        <Users className="w-8 h-8" />
-                      </div>
-                      <div>
-                        <div className="text-[10px] font-black uppercase tracking-widest mb-1 leading-none">Workspace</div>
-                        <div className="text-xl font-display font-bold leading-none mb-1">Professionals</div>
-                        <div className="text-[10px] font-bold opacity-60">Coming Soon</div>
-                      </div>
+                      <div className="absolute top-1 left-1 w-2 h-0.5 bg-slate-900 rounded-full opacity-20" />
+                      <span className="text-slate-900 font-black text-sm tracking-tighter">AI</span>
                     </div>
-
-                    <div className="group flex flex-col items-center justify-center p-8 bg-white/50 dark:bg-slate-800/50 border-2 border-slate-100 dark:border-slate-700 rounded-[2.5rem] opacity-40 grayscale cursor-not-allowed relative overflow-hidden text-center gap-4">
-                      <div className="w-16 h-16 rounded-2xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-400">
-                        <School className="w-8 h-8" />
-                      </div>
-                      <div>
-                        <div className="text-[10px] font-black uppercase tracking-widest mb-1 leading-none">Workspace</div>
-                        <div className="text-xl font-display font-bold leading-none mb-1">Teachers</div>
-                        <div className="text-[10px] font-bold opacity-60">Coming Soon</div>
-                      </div>
-                    </div>
-                  </div>
+                    <span className="font-display font-bold text-xl tracking-tighter text-slate-900">Inno-AI Master</span>
+                  </motion.div>
+                  
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.1 }}
+                    className="space-y-1"
+                  >
+                    <h1 className="text-[60px] lg:text-[80px] font-display font-black leading-[0.9] tracking-[-0.04em] text-slate-900">
+                      2026<br />
+                      Inno-Ai<br />
+                      Slides Master.
+                    </h1>
+                  </motion.div>
+ 
+                  <motion.p 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.2 }}
+                    className="max-w-md text-lg font-bold text-slate-500/60 uppercase tracking-widest leading-tight"
+                  >
+                    Create your ppt slides with in seconds.
+                  </motion.p>
                 </div>
 
-                <motion.div 
-                  initial={{ x: 100, opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                  transition={{ delay: 0.4 }}
-                  className="relative hidden lg:block"
-                >
-                  <div className="relative z-10 w-[500px] h-[600px] bg-white dark:bg-slate-800 border-[12px] border-slate-100 dark:border-slate-700 rounded-[4rem] shadow-2xl overflow-hidden p-12 space-y-8 rotate-3">
-                    <div className="w-20 h-2 bg-brand/20 rounded-full" />
-                    <div className="space-y-4">
-                      <div className="w-full h-8 bg-slate-100 dark:bg-slate-700 rounded-xl" />
-                      <div className="w-3/4 h-8 bg-slate-100 dark:bg-slate-700 rounded-xl" />
+                <div className="pt-16 md:pt-32">
+                   <div className="text-[11px] font-black uppercase tracking-[0.3em] text-[#0f172a] mb-2">
+                     Presented By : {studentName || "SlideCraft Intelligence"}
+                   </div>
+                   <div className="h-0.5 w-12 bg-brand" />
+                </div>
+              </div>
+
+              {/* Right Side: Yellow Interaction Zone */}
+              <div className="w-full lg:w-2/5 bg-[#facc15] relative flex items-center justify-center p-8 lg:p-16">
+                {/* Geometric Cutout Decoration */}
+                <div className="absolute top-0 left-0 w-32 h-full bg-white -translate-x-1/2 -rotate-6 origin-top hidden lg:block" />
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full h-fit relative z-10">
+                  {/* Student Workspace (Active) */}
+                  <motion.button
+                    whileHover={{ y: -8, scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => { setUserRole("Student"); setStep("metadata"); }}
+                    className="aspect-square bg-white rounded-[2rem] p-6 shadow-xl flex flex-col justify-between text-left group transition-all border border-brand/10 relative overflow-hidden"
+                  >
+                    <img 
+                      src="https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&q=80&w=800" 
+                      alt="Student"
+                      className="absolute inset-0 w-full h-full object-cover opacity-20 group-hover:opacity-30 transition-opacity"
+                    />
+                    <div className="space-y-1 relative z-10">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                        <GraduationCap className="w-3 h-3" /> Students
+                      </div>
+                      <h3 className="text-xl font-display font-bold text-slate-900 leading-none">Student<br />Suite</h3>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="aspect-square bg-slate-50 dark:bg-slate-700/50 rounded-3xl" />
-                      <div className="aspect-square bg-slate-50 dark:bg-slate-700/50 rounded-3xl" />
+                    <div className="flex items-end justify-between relative z-10">
+                       <div className="w-12 h-12 rounded-2xl bg-brand/10 flex items-center justify-center">
+                          <GraduationCap className="w-6 h-6 text-brand" />
+                       </div>
+                       <div className="text-[8px] font-bold text-brand uppercase tracking-widest">Unlocked</div>
                     </div>
-                    <div className="space-y-3">
-                      {[1,2,3].map(i => (
-                        <div key={i} className="w-full h-4 bg-slate-50 dark:bg-slate-700 rounded-lg" style={{ opacity: 1 - i * 0.2 }} />
-                      ))}
+                  </motion.button>
+
+                  {/* Professional Workspace (Locked) */}
+                  <div className="aspect-square bg-brand rounded-[2rem] p-6 shadow-xl flex flex-col justify-between text-left text-white opacity-95 group relative overflow-hidden grayscale border border-white/20">
+                    <img 
+                      src="https://images.unsplash.com/photo-1497215728101-856f4ea42174?auto=format&fit=crop&q=80&w=800" 
+                      alt="Business"
+                      className="absolute inset-0 w-full h-full object-cover opacity-10"
+                    />
+                    <div className="space-y-1 relative z-10">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-white/40 flex items-center gap-2">
+                        <Users className="w-3 h-3" /> Professionals
+                      </div>
+                      <h3 className="text-xl font-display font-bold text-white leading-none">Business<br />Decks</h3>
+                    </div>
+                    <div className="flex items-end justify-between relative z-10">
+                       <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center">
+                          <Users className="w-6 h-6" />
+                       </div>
+                       <Lock className="w-4 h-4 opacity-40" />
                     </div>
                   </div>
 
-                  {/* Floating Elements */}
-                  <motion.div 
-                    animate={{ y: [0, -20, 0] }}
-                    transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }}
-                    className="absolute -top-10 -left-10 w-32 h-32 bg-white dark:bg-slate-800 rounded-3xl shadow-xl border border-slate-100 dark:border-slate-700 flex items-center justify-center"
-                  >
-                    <Palette className="w-12 h-12 text-brand" />
-                  </motion.div>
-                  <motion.div 
-                    animate={{ y: [0, 20, 0] }}
-                    transition={{ repeat: Infinity, duration: 5, ease: "easeInOut", delay: 1 }}
-                    className="absolute -bottom-10 -right-10 w-40 h-24 bg-white dark:bg-slate-800 rounded-3xl shadow-xl border border-slate-100 dark:border-slate-700 p-6 space-y-3"
-                  >
-                    <div className="flex items-center gap-2">
-                       <Clock className="w-4 h-4 text-emerald-500" />
-                       <span className="text-[10px] font-black uppercase tracking-widest">Live Sync</span>
+                  {/* Teacher Workspace (Locked) */}
+                  <div className="aspect-square bg-white rounded-[2rem] p-6 shadow-xl flex flex-col justify-between text-left border border-slate-100 opacity-90 grayscale relative overflow-hidden">
+                    <img 
+                      src="https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&q=80&w=800"
+                      alt="Teacher"
+                      className="absolute inset-0 w-full h-full object-cover opacity-10"
+                    />
+                    <div className="space-y-1 relative z-10">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
+                        <School className="w-3 h-3" /> Teachers
+                      </div>
+                      <h3 className="text-xl font-display font-bold text-slate-900 leading-none">Educator<br />Tools</h3>
                     </div>
-                    <div className="w-full h-2 bg-emerald-100 dark:bg-emerald-500/20 rounded-full overflow-hidden">
-                       <motion.div 
-                        animate={{ width: ["0%", "100%"] }}
-                        transition={{ repeat: Infinity, duration: 3 }}
-                        className="h-full bg-emerald-500" 
-                       />
+                    <div className="flex items-end justify-between relative z-10">
+                       <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center">
+                          <School className="w-6 h-6 text-slate-400" />
+                       </div>
+                       <div className="text-[8px] font-bold text-slate-300 uppercase tracking-widest">Locked</div>
                     </div>
-                  </motion.div>
-                </motion.div>
+                  </div>
+
+                  {/* Stats Card */}
+                  <div className="aspect-square bg-[#0f172a] rounded-[2rem] p-6 shadow-xl flex flex-col justify-center items-center text-center space-y-2">
+                    <div className="text-3xl font-display font-bold text-[#facc15]">{stats.totalPresentations || "4.8k"}</div>
+                    <div className="text-[8px] font-black uppercase tracking-[0.2em] text-white/40 leading-tight">Reports<br />Generated</div>
+                  </div>
+                </div>
               </div>
             </motion.div>
           )}
@@ -631,7 +621,11 @@ export default function App() {
             >
               <div className="w-full bg-white/70 p-16 rounded-[4rem] border border-white shadow-[0_60px_100px_-20px_rgba(0,0,0,0.1)] backdrop-blur-3xl space-y-12 text-center">
                  <div className="space-y-4">
-                    <h2 className="text-4xl font-display font-bold tracking-tight">Student Identity</h2>
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 text-amber-600 text-[8px] font-black uppercase tracking-widest outline outline-1 outline-amber-100 mb-2">
+                       {userRole === "Student" ? <GraduationCap className="w-3 h-3" /> : userRole === "Teacher" ? <School className="w-3 h-3" /> : <Users className="w-3 h-3" />}
+                       {userRole} Profile
+                    </div>
+                    <h2 className="text-4xl font-display font-bold tracking-tight">Identity Details</h2>
                     <p className="text-sm font-medium text-ink/40">Tell us who you are so we can personalize your deck's title slide.</p>
                  </div>
 
@@ -657,7 +651,7 @@ export default function App() {
                       <User className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 opacity-30" />
                       <input 
                         required
-                        placeholder="Student Full Name"
+                        placeholder={userRole === "Student" ? "Full Name" : userRole === "Teacher" ? "Lecturer Name" : "Professional Name"}
                         value={studentName}
                         onChange={(e) => setStudentName(e.target.value)}
                         className="w-full h-18 bg-white border border-slate-100 rounded-3xl px-16 font-bold text-lg focus:outline-none focus:border-brand shadow-sm" 
@@ -667,7 +661,7 @@ export default function App() {
                       <Hash className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 opacity-30" />
                       <input 
                         required
-                        placeholder="Batch / Course Code"
+                        placeholder={userRole === "Student" ? "Batch / ID" : userRole === "Teacher" ? "Dept / Batch" : "Designation / Dept"}
                         value={batch}
                         onChange={(e) => setBatch(e.target.value)}
                         className="w-full h-18 bg-white border border-slate-100 rounded-3xl px-16 font-bold text-lg focus:outline-none focus:border-brand shadow-sm" 
@@ -677,7 +671,7 @@ export default function App() {
                       <School className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 opacity-30" />
                       <input 
                         required
-                        placeholder="Educational Institution"
+                        placeholder={userRole === "Student" || userRole === "Teacher" ? "Educational Institution" : "Company / Organization"}
                         value={institution}
                         onChange={(e) => setInstitution(e.target.value)}
                         className="w-full h-18 bg-white border border-slate-100 rounded-3xl px-16 font-bold text-lg focus:outline-none focus:border-brand shadow-sm" 
@@ -699,7 +693,7 @@ export default function App() {
                         }
                       }}
                       disabled={!studentName || !batch || !institution}
-                      className="flex-1 h-18 rounded-3xl bg-slate-900 text-white font-black text-xs uppercase tracking-[0.2em] shadow-xl hover:translate-y-[-2px] transition-all disabled:opacity-30"
+                      className="flex-1 h-18 rounded-3xl bg-brand text-white font-black text-xs uppercase tracking-[0.2em] shadow-xl hover:translate-y-[-2px] transition-all disabled:opacity-30"
                     >
                       Next: Build Blueprint
                     </button>
@@ -803,7 +797,7 @@ export default function App() {
                          />
                          <div className={cn(
                            "w-12 h-6 rounded-full transition-colors",
-                           addImages ? "bg-emerald-400" : "bg-slate-200"
+                           addImages ? "bg-amber-400" : "bg-slate-200"
                          )} />
                          <div className={cn(
                            "absolute top-1 w-4 h-4 bg-white rounded-full transition-transform",
@@ -824,7 +818,7 @@ export default function App() {
                              onClick={() => setShowTemplateModal(true)}
                              className={cn(
                                "h-24 rounded-2xl border-2 border-dashed flex flex-col items-center justify-center gap-2 overflow-hidden transition-all",
-                               visualTemplate ? "border-emerald-200 bg-emerald-50/20" : "border-slate-100 hover:bg-slate-50"
+                               visualTemplate ? "border-amber-200 bg-amber-50/20" : "border-slate-100 hover:bg-slate-50"
                              )}
                            >
                              {visualTemplate ? (
@@ -1052,23 +1046,39 @@ export default function App() {
                                   e.currentTarget.style.display = 'none';
                                 }}
                               />
-                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
-                                 <button 
-                                   onClick={() => openImageAssistant(i)}
-                                   className="flex items-center gap-2 bg-white px-4 py-2 rounded-full text-[8px] font-black uppercase tracking-widest text-ink hover:scale-105 transition-transform"
-                                 >
-                                    <Sparkles className="w-3 h-3 text-brand" /> Regenerate
-                                 </button>
-                                 <label className="flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 px-4 py-2 rounded-full text-[8px] font-black uppercase tracking-widest text-white hover:bg-white/20 transition-all cursor-pointer">
-                                    <Upload className="w-3 h-3" /> Upload New
-                                    <input 
-                                      type="file" 
-                                      className="hidden" 
-                                      accept="image/*"
-                                      onChange={(e) => handleLocalImageUpload(i, e)}
-                                    />
-                                 </label>
-                              </div>
+                               <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
+                                  <div className="flex gap-2">
+                                     <button 
+                                       onClick={() => openImageAssistant(i)}
+                                       className="flex items-center gap-2 bg-white px-4 py-2 rounded-full text-[8px] font-black uppercase tracking-widest text-ink hover:scale-105 transition-transform"
+                                     >
+                                        <Sparkles className="w-3 h-3 text-brand" /> Regenerate
+                                     </button>
+                                     <button 
+                                       onClick={(e) => {
+                                         e.stopPropagation();
+                                         setSlideImages(prev => {
+                                           const next = { ...prev };
+                                           delete next[i];
+                                           return next;
+                                         });
+                                       }}
+                                       className="flex items-center justify-center bg-rose-500 w-8 h-8 rounded-full text-white hover:scale-110 transition-transform"
+                                       title="Remove Image"
+                                     >
+                                        <Trash2 className="w-4 h-4" />
+                                     </button>
+                                  </div>
+                                  <label className="flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 px-4 py-2 rounded-full text-[8px] font-black uppercase tracking-widest text-white hover:bg-white/20 transition-all cursor-pointer">
+                                     <Upload className="w-3 h-3" /> Upload New
+                                     <input 
+                                       type="file" 
+                                       className="hidden" 
+                                       accept="image/*"
+                                       onChange={(e) => handleLocalImageUpload(i, e)}
+                                     />
+                                  </label>
+                               </div>
                               <div className="image-fail-msg hidden absolute inset-0 bg-rose-50 flex-col items-center justify-center p-4 text-center gap-2 group-data-[failed=true]/img:flex">
                                  <X className="w-6 h-6 text-rose-400" />
                                  <span className="text-[8px] font-black uppercase tracking-widest text-rose-500">Visual Blocked or Failed</span>
@@ -1159,7 +1169,21 @@ export default function App() {
                             )}
                           >
                              <div className="flex-1 space-y-12">
-                                <h3 className="text-5xl font-display font-bold tracking-tight leading-tight">{data.slides[currentSlideIndex].title}</h3>
+                                <div className="flex items-start justify-between gap-4">
+                                  <textarea
+                                    rows={2}
+                                    value={data.slides[currentSlideIndex].title}
+                                    onChange={(e) => handleUpdateSlideAt(currentSlideIndex, { ...data.slides[currentSlideIndex], title: e.target.value })}
+                                    className="flex-1 bg-transparent font-display font-bold text-5xl tracking-tight leading-tight resize-none focus:outline-none border-b border-transparent focus:border-brand/20 p-2"
+                                  />
+                                  <button 
+                                    onClick={() => openImageAssistant(currentSlideIndex)}
+                                    className="mt-2 p-4 bg-brand/5 text-brand rounded-3xl hover:bg-brand/10 transition-all active:scale-90"
+                                    title="Magic Visual"
+                                  >
+                                    <Sparkles className="w-8 h-8" />
+                                  </button>
+                                </div>
                                 <div className="space-y-8">
                                    {data.slides[currentSlideIndex].content.map((point, pi) => (
                                       <motion.div 
@@ -1169,8 +1193,17 @@ export default function App() {
                                         transition={{ delay: pi * 0.1 }}
                                         className="flex items-start gap-4"
                                       >
-                                         <div className="w-2.5 h-2.5 rounded-full mt-3 flex-shrink-0" style={{ backgroundColor: themeColor }} />
-                                         <p className="text-xl font-medium text-ink/70 dark:text-slate-300 leading-relaxed">{point}</p>
+                                         <div className="w-2.5 h-2.5 rounded-full mt-5 flex-shrink-0" style={{ backgroundColor: themeColor }} />
+                                         <textarea
+                                           rows={2}
+                                           value={point}
+                                           onChange={(e) => {
+                                             const newContent = [...data.slides[currentSlideIndex].content];
+                                             newContent[pi] = e.target.value;
+                                             handleUpdateSlideAt(currentSlideIndex, { ...data.slides[currentSlideIndex], content: newContent });
+                                           }}
+                                           className="flex-1 bg-transparent text-xl font-medium text-ink/70 dark:text-slate-300 leading-relaxed resize-none focus:outline-none border-b border-transparent focus:border-brand/10 p-1"
+                                         />
                                       </motion.div>
                                    ))}
                                 </div>
@@ -1190,13 +1223,38 @@ export default function App() {
                                      src={slideImages[currentSlideIndex]} 
                                      className="w-full h-full object-cover" 
                                      referrerPolicy="no-referrer" 
+                                     onLoad={(e) => {
+                                        e.currentTarget.parentElement?.removeAttribute('data-failed');
+                                        e.currentTarget.style.display = 'block';
+                                     }}
                                      onError={(e) => {
                                         e.currentTarget.style.display = 'none';
                                         e.currentTarget.parentElement?.setAttribute('data-failed', 'true');
                                      }}
                                    />
-                                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/main:opacity-100 transition-opacity flex items-center justify-center">
-                                      <Sparkles className="w-6 h-6 text-white" />
+                                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/main:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                                      <button 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          openImageAssistant(currentSlideIndex);
+                                        }}
+                                        className="w-12 h-12 bg-white text-brand rounded-full flex items-center justify-center shadow-lg hover:scale-110 transition-transform"
+                                      >
+                                         <Sparkles className="w-6 h-6" />
+                                      </button>
+                                      <button 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setSlideImages(prev => {
+                                            const next = { ...prev };
+                                            delete next[currentSlideIndex];
+                                            return next;
+                                          });
+                                        }}
+                                        className="w-12 h-12 bg-rose-500 text-white rounded-full flex items-center justify-center shadow-lg hover:scale-110 transition-transform"
+                                      >
+                                         <Trash2 className="w-6 h-6" />
+                                      </button>
                                    </div>
                                    <div className="image-fail-msg hidden absolute inset-0 bg-rose-50 flex-col items-center justify-center p-4 text-center gap-2 group-data-[failed=true]/main:flex">
                                      <X className="w-8 h-8 text-rose-400" />
@@ -1286,6 +1344,39 @@ export default function App() {
                 </div>
 
                 <div className="space-y-8 overflow-y-auto pr-2 custom-scrollbar">
+                   <div className="bg-white/70 dark:bg-slate-800/70 border border-white dark:border-slate-700 rounded-[2.5rem] p-8 shadow-sm backdrop-blur-md">
+                      <div className="flex items-center gap-4 mb-6">
+                         <div className="w-10 h-10 bg-brand rounded-xl flex items-center justify-center text-white shadow-lg">
+                            <Sparkles className="w-5 h-5" />
+                         </div>
+                         <div>
+                           <h4 className="text-lg font-display font-bold tracking-tight">AI Assistant</h4>
+                           <p className="text-[9px] font-black uppercase tracking-widest opacity-40">Slide {currentSlideIndex + 1} Tools</p>
+                         </div>
+                      </div>
+                      <div className="space-y-3">
+                         <button 
+                           onClick={() => openImageAssistant(currentSlideIndex)}
+                           className="w-full h-16 rounded-2xl bg-white dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 flex items-center justify-center gap-3 text-xs font-black uppercase tracking-widest hover:border-brand hover:text-brand transition-all shadow-sm active:scale-95 group"
+                         >
+                           <div className="w-8 h-8 rounded-lg bg-brand/10 flex items-center justify-center text-brand group-hover:scale-110 transition-transform">
+                             <ImageIcon className="w-4 h-4" />
+                           </div>
+                           Generate Image
+                         </button>
+
+                         <button 
+                           onClick={() => {
+                             const topic = data.slides[currentSlideIndex].title;
+                             window.open(`https://www.google.com/search?q=${encodeURIComponent(topic)}+image+clipart`, '_blank');
+                           }}
+                           className="w-full h-12 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-700 flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-widest opacity-60 hover:opacity-100 transition-all"
+                         >
+                           <Search className="w-3 h-3" /> Find Assets
+                         </button>
+                      </div>
+                   </div>
+
                    <div className="bg-white/70 dark:bg-slate-800/70 border border-white dark:border-slate-700 rounded-[2.5rem] p-8 shadow-sm backdrop-blur-md">
                      <div className="flex items-center gap-4 mb-6">
                         <div className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center text-white">
@@ -1635,98 +1726,30 @@ export default function App() {
         )}
 
         {/* Image AI Assistant Modal */}
-        {activeImageSlideIndex !== null && showImageAssistant && (
-          <motion.div 
-            key="image-assistant"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-6"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              className="w-full max-w-xl bg-white dark:bg-slate-800 rounded-[3rem] shadow-2xl overflow-hidden"
-            >
-              <div className="p-8 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-brand/10 flex items-center justify-center text-brand">
-                    <Sparkles className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-display font-bold">Image AI Assistant</h3>
-                    <p className="text-[10px] font-black uppercase tracking-widest opacity-40">Slide {activeImageSlideIndex + 1}</p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setShowImageAssistant(false)}
-                  className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center hover:bg-rose-500 hover:text-white transition-all"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              
-              <div className="p-8 space-y-8">
-                 <div className="bg-slate-50 dark:bg-slate-900/50 rounded-3xl p-6 border border-slate-100 dark:border-slate-700">
-                    <div className="text-[10px] font-black uppercase tracking-widest opacity-40 mb-3 flex items-center gap-2">
-                       <FileText className="w-3 h-3" /> Topic Context
-                    </div>
-                    <p className="text-sm font-medium text-ink/60 dark:text-slate-400 italic font-display">
-                      "{data?.slides[activeImageSlideIndex].title}"
-                    </p>
-                 </div>
-
-                 <div className="space-y-4">
-                    <div className="text-[10px] font-black uppercase tracking-widest opacity-40 flex items-center justify-between">
-                      <span>AI Generating Prompt</span>
-                      <span className="text-brand">Type to refine</span>
-                    </div>
-                    <div className="relative">
-                      <textarea 
-                        rows={4}
-                        value={imageChatPrompt}
-                        onChange={(e) => setImageChatPrompt(e.target.value)}
-                        placeholder="Describe the image you want AI to generate... (e.g. 'Simple 2D illustration of a blue rocket in space')"
-                        className="w-full p-6 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-700 rounded-3xl font-medium text-sm focus:outline-none focus:border-brand shadow-sm resize-none"
-                      />
-                      <div className="absolute right-4 bottom-4">
-                         <button 
-                           onClick={() => setImageChatPrompt(`A professional 3D isometric illustration of ${data?.slides[activeImageSlideIndex!].title}, vibrant colors, clean aesthetic, education style.`)}
-                           className="px-3 py-1 bg-slate-100 dark:bg-slate-800 text-[8px] font-black uppercase tracking-widest rounded-lg hover:bg-brand hover:text-white transition-all"
-                         >
-                           ✨ Stylize
-                         </button>
-                      </div>
-                    </div>
-                 </div>
-
-                 <button 
-                   onClick={handleGenerateImage}
-                   disabled={isGeneratingImage || !imageChatPrompt.trim()}
-                   className="w-full h-16 bg-brand text-white rounded-[2rem] font-black text-xs uppercase tracking-[0.2em] shadow-xl hover:translate-y-[-4px] active:scale-95 disabled:opacity-50 disabled:grayscale transition-all flex items-center justify-center gap-3 overflow-hidden"
-                 >
-                   {isGeneratingImage ? (
-                     <div className="flex items-center gap-2">
-                       <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                       <span>Painting...</span>
-                     </div>
-                   ) : (
-                     <>
-                       Generate Slide Visual
-                       <ArrowRight className="w-4 h-4" />
-                     </>
-                   )}
-                 </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
+        <AnimatePresence>
+          {activeImageSlideIndex !== null && showImageAssistant && (
+            <ImageAssistantModal 
+              index={activeImageSlideIndex}
+              onClose={() => {
+                setShowImageAssistant(false);
+                setActiveImageSlideIndex(null);
+              }}
+              onImageSelect={(url) => {
+                setSlideImages(prev => ({ ...prev, [activeImageSlideIndex!]: url }));
+                setShowImageAssistant(false);
+                setActiveImageSlideIndex(null);
+              }}
+              slideTitle={data?.slides[activeImageSlideIndex].title || ""}
+              themeColor={themeColor}
+            />
+          )}
+        </AnimatePresence>
       </AnimatePresence>
 
       {/* Persistent Global Status */}
       <footer className="h-16 px-8 flex items-center justify-between border-t border-white/50 glass text-[10px] font-black uppercase tracking-[0.2em] text-ink/20 shrink-0">
          <div className="flex gap-8">
-            <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" /> Neural Network: Active</span>
+            <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" /> Neural Network: Active</span>
             <span className="hidden sm:inline">Engine: SlideCraft v2.0 // Gemini-3-Flash</span>
          </div>
          <div>© 2026 Crafted for Education</div>
