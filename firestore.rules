@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global denial
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidProfile(data) {
+      return data.keys().hasAll(['email', 'uid', 'createdDate', 'pptCount']) &&
+             data.keys().size() == 4 &&
+             data.email is string &&
+             data.uid == request.auth.uid &&
+             data.pptCount is number;
+    }
+
+    function isValidPPT(data) {
+      return data.keys().hasAll(['topic', 'date', 'slideCount', 'complexity', 'userId']) &&
+             data.keys().size() == 5;
+    }
+
+    // Stats collection (publicly readable counters)
+    match /stats/{docId} {
+      allow read, write: if true;
+    }
+
+    // User profiles (simplified for guests)
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Presentations (subcollection)
+    match /users/{userId}/presentations/{pptId} {
+      allow read, write: if true;
+    }
+  }
+}

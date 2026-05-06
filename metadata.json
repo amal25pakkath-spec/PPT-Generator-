@@ -1,0 +1,6 @@
+{
+  "name": "SlideCraft AI",
+  "description": "An advanced AI-powered presentation builder for students. Generate, preview, and edit slides with automated academic references, PDF export, and dark mode support.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": []
+}
